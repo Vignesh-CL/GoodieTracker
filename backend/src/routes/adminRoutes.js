@@ -1,0 +1,26 @@
+import { Router } from "express";
+import { body } from "express-validator";
+import { createUser, deactivateUser, listUsers, updateUser } from "../controllers/userController.js";
+import { createGoodie, deactivateGoodie, listGoodies, updateGoodie } from "../controllers/goodieController.js";
+import { cancelEvent, createEvent, listEvents, updateEvent } from "../controllers/eventController.js";
+import { createDistribution, listDistributions } from "../controllers/distributionController.js";
+import { allowRoles, requireAuth } from "../middleware/auth.js";
+import { validate } from "../middleware/validate.js";
+
+const router = Router();
+router.use(requireAuth, allowRoles("admin"));
+router.get("/users", listUsers);
+router.post("/users", [body("name").trim().notEmpty(), body("email").isEmail(), body("password").isLength({ min: 8 }), body("role").isIn(["admin", "hr", "employee"])], validate, createUser);
+router.patch("/users/:id", updateUser);
+router.delete("/users/:id", deactivateUser);
+router.get("/goodies", listGoodies);
+router.post("/goodies", [body("name").trim().notEmpty(), body("stock").isInt({ min: 0 })], validate, createGoodie);
+router.patch("/goodies/:id", updateGoodie);
+router.delete("/goodies/:id", deactivateGoodie);
+router.get("/events", listEvents);
+router.post("/events", [body("name").trim().notEmpty(), body("date").isISO8601()], validate, createEvent);
+router.patch("/events/:id", updateEvent);
+router.delete("/events/:id", cancelEvent);
+router.get("/distributions", listDistributions);
+router.post("/distributions", [body("employee").isMongoId(), body("goodie").isMongoId(), body("event").isMongoId(), body("quantity").optional().isInt({ min: 1 })], validate, createDistribution);
+export default router;

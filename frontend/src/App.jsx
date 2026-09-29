@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import api from "./api";
 import Button from "./components/Button";
 import Card from "./components/Card";
 import MainLayout from "./components/MainLayout";
@@ -7,61 +8,11 @@ import StatusBadge from "./components/StatusBadge";
 import Table from "./components/Table";
 import "./App.css";
 
-const demoUsers = {
-  "admin@cirruslabs.io": {
-    password: "admin123",
-    name: "Admin",
-    role: "Administrator",
-  },
-  "employee@cirruslabs.io": {
-    password: "employee123",
-    name: "Subham Singh",
-    role: "Employee",
-    goodiesReceived: 3,
-  },
+const roleLabels = {
+  admin: "Administrator",
+  hr: "HR / Coordinator",
+  employee: "Employee",
 };
-
-const initialEmployees = [
-  {
-    id: 1,
-    name: "Vignesh D D",
-    email: "vignesh.dd@cirruslabs.io",
-    department: "Technology",
-    code: "EMP-1001",
-    status: "Active",
-  },
-  {
-    id: 2,
-    name: "Prajwal K M",
-    email: "prajwal.km@cirruslabs.io",
-    department: "Technology",
-    code: "EMP-1002",
-    status: "Active",
-  },
-  {
-    id: 3,
-    name: "Subham Singh",
-    email: "subham.singh@cirruslabs.io",
-    department: "Technology",
-    code: "EMP-1003",
-    status: "Active",
-  },
-];
-
-const initialGoodies = [
-  {
-    id: 1,
-    name: "CirrusLabs T-shirt",
-    description: "A T-shirt with logo of cirruslab.",
-    stock: 120,
-  },
-  {
-    id: 2,
-    name: "Cirrus Book",
-    description: "A TO-DO book to track our activity",
-    stock: 80,
-  },
-];
 
 function App() {
   const [user, setUser] = useState(null);
@@ -69,16 +20,30 @@ function App() {
   const [email, setEmail] = useState("admin@cirruslabs.io");
   const [password, setPassword] = useState("admin123");
 
-  function handleLogin(event) {
+  async function handleLogin(event) {
     event.preventDefault();
-    const account = demoUsers[email.toLowerCase()];
-    if (!account || account.password !== password) {
-      setLoginError("Use one of the demo accounts below.");
-      return;
+    try {
+      const { data } = await api.post("/auth/login", { email, password });
+      localStorage.setItem("goodietrack_token", data.token);
+      setUser(data.user);
+      setLoginError("");
+    } catch (error) {
+      setLoginError(error.response?.data?.message || "Unable to sign in.");
     }
-    setUser({ name: account.name, role: account.role });
-    setLoginError("");
   }
+
+  function handleLogout() {
+    localStorage.removeItem("goodietrack_token");
+    setUser(null);
+  }
+
+  useEffect(() => {
+    if (localStorage.getItem("goodietrack_token"))
+      api
+        .get("/auth/me")
+        .then(({ data }) => setUser(data.user))
+        .catch(handleLogout);
+  }, []);
 
   if (!user)
     return (
@@ -91,7 +56,7 @@ function App() {
         onSubmit={handleLogin}
       />
     );
-  return <Dashboard user={user} onLogout={() => setUser(null)} />;
+  return <Dashboard user={user} onLogout={handleLogout} />;
 }
 
 function LoginScreen({
@@ -150,70 +115,160 @@ function LoginScreen({
 
 function Dashboard({ user, onLogout }) {
   const [activePage, setActivePage] = useState("overview");
-  const [employees, setEmployees] = useState(initialEmployees);
-  const [goodies] = useState(initialGoodies);
-  const [events, setEvents] = useState([
-    {
-      id: 1,
-      name: "September Welcome Kit",
-      date: "2026-09-26",
-      status: "Active",
-    },
-  ]);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [employees, setEmployees] = useState([]);
+  const [goodies, setGoodies] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [distributions, setDistributions] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [error, setError] = useState("");
+  const isAdmin = user.role === "admin";
 
-  const isAdmin = user.role === "Administrator";
-  const collected = 18;
+  async function loadData() {
+    if (!isAdmin) return;
+    try {
+      const [users, inventory, eventList, records] = await Promise.all([
+        api.get("/admin/users"),
+        api.get("/admin/goodies"),
+        api.get("/admin/events"),
+        api.get("/admin/distributions"),
+      ]);
+      setEmployees(users.data.filter((item) => item.role === "employee"));
+      setGoodies(inventory.data);
+      setEvents(eventList.data);
+      setDistributions(records.data);
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message || "Could not load admin data.",
+      );
+    }
+  }
+  useEffect(() => {
+    loadData();
+  }, [isAdmin]);
+
+  async function createRecord(path, payload) {
+    try {
+      await api.post(path, payload);
+      setModal(null);
+      setError("");
+      await loadData();
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message || "Could not save record.",
+      );
+    }
+  }
+  async function deactivate(path) {
+    try {
+      await api.delete(path);
+      await loadData();
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message || "Could not update record.",
+      );
+    }
+  }
+
   const pageContent = !isAdmin ? (
     <EmployeeOverviewPage user={user} />
   ) : activePage === "employees" ? (
-    <EmployeesPage employees={employees} setEmployees={setEmployees} />
+    <EmployeesPage
+      employees={employees}
+      onAdd={() => setModal("employee")}
+      onDeactivate={(id) => deactivate(`/admin/users/${id}`)}
+    />
   ) : activePage === "inventory" ? (
-    <InventoryPage goodies={goodies} />
+    <InventoryPage
+      goodies={goodies}
+      onAdd={() => setModal("goodie")}
+      onDeactivate={(id) => deactivate(`/admin/goodies/${id}`)}
+    />
   ) : activePage === "events" ? (
-    <EventsPage events={events} onAdd={() => setModalOpen(true)} />
+    <EventsPage
+      events={events}
+      onAdd={() => setModal("event")}
+      onCancel={(id) => deactivate(`/admin/events/${id}`)}
+    />
   ) : activePage === "distribution" ? (
-    <DistributionPage employees={employees} goodies={goodies} events={events} />
-  ) : (
-    <OverviewPage
-      collected={collected}
+    <DistributionPage
       employees={employees}
       goodies={goodies}
+      events={events}
+      onSave={(payload) => createRecord("/admin/distributions", payload)}
+    />
+  ) : (
+    <OverviewPage
+      employees={employees}
+      goodies={goodies}
+      distributions={distributions}
+      onNavigate={setActivePage}
       onRecord={() => setActivePage("distribution")}
     />
   );
 
   return (
     <MainLayout
-      user={user}
+      user={{ ...user, role: roleLabels[user.role] }}
       activePage={activePage}
       isAdmin={isAdmin}
       onNavigate={setActivePage}
       onLogout={onLogout}
     >
-      {pageContent}
-      {modalOpen && (
-        <Modal
-          title="Create distribution event"
-          onClose={() => setModalOpen(false)}
-        >
-          <EventForm
-            onSave={(event) => {
-              setEvents([
-                ...events,
-                { ...event, id: events.length + 1, status: "Draft" },
-              ]);
-              setModalOpen(false);
-            }}
-          />
-        </Modal>
-      )}
+      <>
+        {error && <p className="error-message">{error}</p>}
+        {pageContent}
+        {modal && (
+          <Modal title={`Add ${modal}`} onClose={() => setModal(null)}>
+            <EntityForm
+              type={modal}
+              onSave={(payload) =>
+                createRecord(
+                  `/admin/${modal === "employee" ? "users" : `${modal}s`}`,
+                  payload,
+                )
+              }
+            />
+          </Modal>
+        )}
+      </>
     </MainLayout>
   );
 }
 
-function OverviewPage({ collected, employees, goodies, onRecord }) {
-  const totalStock = goodies.reduce((sum, goodie) => sum + goodie.stock, 0);
+function EmployeeOverviewPage({ user }) {
+  return (
+    <>
+      <PageHeader
+        eyebrow="EMPLOYEE VIEW"
+        title={`Welcome, ${user.name}.`}
+        copy="A simple view of the goodies you have received."
+      />
+      <div className="stat-grid">
+        <Card>
+          <span className="stat-label">Goodies received</span>
+          <strong className="stat-value">0</strong>
+          <small>Recorded for your account</small>
+        </Card>
+      </div>
+    </>
+  );
+}
+function PageHeader({ eyebrow, title, copy, action }) {
+  return (
+    <div className="page-header">
+      <div>
+        <span className="eyebrow">{eyebrow}</span>
+        <h1>{title}</h1>
+        <p>{copy}</p>
+      </div>
+      {action}
+    </div>
+  );
+}
+function OverviewPage({ employees, goodies, distributions, onNavigate, onRecord }) {
+  const totalStock = goodies.reduce((sum, item) => sum + item.stock, 0);
+  const collected = distributions.length;
+  const activeEvent = distributions[0]?.event?.name || "No collections yet";
   return (
     <>
       <PageHeader
@@ -225,19 +280,18 @@ function OverviewPage({ collected, employees, goodies, onRecord }) {
       <div className="stat-grid">
         <Card>
           <span className="stat-label">Active event</span>
-          <strong className="stat-value">September Welcome Kit</strong>
-          <small>26 Sep 2026</small>
+          <strong className="stat-value">{activeEvent}</strong>
+          <small>Live from the database</small>
         </Card>
         <Card>
           <span className="stat-label">Collected</span>
           <strong className="stat-value">{collected}</strong>
-          <small>of {employees.length * 10} active employees</small>
+          <small>of {employees.length} active employees</small>
         </Card>
         <Card>
           <span className="stat-label">Pending</span>
           <strong className="stat-value">
-            
-            {employees.length * 10 - collected}
+            {Math.max(employees.length - collected, 0)}
           </strong>
           <small>Still to collect</small>
         </Card>
@@ -250,7 +304,7 @@ function OverviewPage({ collected, employees, goodies, onRecord }) {
       <div className="content-grid">
         <Card className="feature-card">
           <span className="eyebrow">THIS WEEK</span>
-          <h2>September Welcome Kit</h2>
+          <h2>{activeEvent}</h2>
           <p>
             Keep collections moving and maintain a clean record for every
             employee.
@@ -258,23 +312,26 @@ function OverviewPage({ collected, employees, goodies, onRecord }) {
           <div className="progress-track">
             <span
               style={{
-                width: `${(collected / (employees.length * 10)) * 100}%`,
+                width: `${employees.length ? Math.min((collected / employees.length) * 100, 100) : 0}%`,
               }}
             />
           </div>
           <div className="progress-label">
             <span>Collection progress</span>
             <strong>
-              {Math.round((collected / (employees.length * 10)) * 100)}%
+              {employees.length
+                ? Math.round((collected / employees.length) * 100)
+                : 0}
+              %
             </strong>
           </div>
         </Card>
         <Card className="quick-card">
           <span className="eyebrow">QUICK LINKS</span>
-          <Button variant="link" onClick={() => {}}>
+          <Button variant="link" onClick={() => onNavigate("employees")}>
             View employee list <span>-&gt;</span>
           </Button>
-          <Button variant="link" onClick={() => {}}>
+          <Button variant="link" onClick={() => onNavigate("inventory")}>
             Check inventory <span>-&gt;</span>
           </Button>
           <Button variant="link" onClick={onRecord}>
@@ -286,7 +343,7 @@ function OverviewPage({ collected, employees, goodies, onRecord }) {
   );
 }
 
-function EmployeesPage({ employees, setEmployees }) {
+function EmployeesPage({ employees, onAdd, onDeactivate }) {
   const columns = [
     {
       key: "name",
@@ -299,11 +356,23 @@ function EmployeesPage({ employees, setEmployees }) {
       ),
     },
     { key: "department", label: "Department" },
-    { key: "code", label: "Code" },
+    { key: "employeeCode", label: "Code" },
     {
       key: "status",
       label: "Status",
-      render: (row) => <StatusBadge status={row.status} />,
+      render: (row) => (
+        <>
+          <StatusBadge status={row.status} />
+          {row.status === "active" && (
+            <button
+              className="logout-link"
+              onClick={() => onDeactivate(row._id)}
+            >
+              Deactivate
+            </button>
+          )}
+        </>
+      ),
     },
   ];
   return (
@@ -312,64 +381,71 @@ function EmployeesPage({ employees, setEmployees }) {
         eyebrow="PEOPLE"
         title="Employees"
         copy="The people your weekly program is built around."
-        action={
-          <Button
-            onClick={() =>
-              setEmployees([
-                ...employees,
-                {
-                  id: employees.length + 1,
-                  name: "New employee",
-                  email: "new@acme.test",
-                  department: "Unassigned",
-                  code: `EMP-100${employees.length + 1}`,
-                  status: "Active",
-                },
-              ])
-            }
-          >
-            Add employee
-          </Button>
-        }
+        action={<Button onClick={onAdd}>Add employee</Button>}
       />
       <Card className="table-card">
-        <Table columns={columns} rows={employees} />
+        <Table
+          columns={columns}
+          rows={employees.map((row) => ({
+            ...row,
+            id: row._id,
+            status: row.status === "active" ? "Active" : "Inactive",
+          }))}
+        />
       </Card>
     </>
   );
 }
-
-function InventoryPage({ goodies }) {
+function InventoryPage({ goodies, onAdd, onDeactivate }) {
   return (
     <>
       <PageHeader
         eyebrow="INVENTORY"
         title="Goodies"
         copy="A live view of what is ready to go."
+        action={<Button onClick={onAdd}>Add goodie</Button>}
       />
       <div className="inventory-grid">
         {goodies.map((goodie) => (
-          <Card className="inventory-card" key={goodie.id}>
+          <Card className="inventory-card" key={goodie._id}>
             <span className="inventory-dot" />
             <h2>{goodie.name}</h2>
             <p>{goodie.description}</p>
             <strong>{goodie.stock}</strong>
             <small>available now</small>
+            <button
+              className="logout-link"
+              onClick={() => onDeactivate(goodie._id)}
+            >
+              Archive
+            </button>
           </Card>
         ))}
       </div>
     </>
   );
 }
-
-function EventsPage({ events, onAdd }) {
+function EventsPage({ events, onAdd, onCancel }) {
   const columns = [
     { key: "name", label: "Event" },
-    { key: "date", label: "Date" },
+    {
+      key: "date",
+      label: "Date",
+      render: (row) => new Date(row.date).toLocaleDateString(),
+    },
     {
       key: "status",
       label: "Status",
-      render: (row) => <StatusBadge status={row.status} />,
+      render: (row) => (
+        <>
+          <StatusBadge status={row.status} />
+          {row.status !== "cancelled" && (
+            <button className="logout-link" onClick={() => onCancel(row._id)}>
+              Cancel
+            </button>
+          )}
+        </>
+      ),
     },
   ];
   return (
@@ -381,13 +457,18 @@ function EventsPage({ events, onAdd }) {
         action={<Button onClick={onAdd}>Add event</Button>}
       />
       <Card className="table-card">
-        <Table columns={columns} rows={events} />
+        <Table
+          columns={columns}
+          rows={events.map((row) => ({ ...row, id: row._id }))}
+        />
       </Card>
     </>
   );
 }
-
-function DistributionPage({ employees, goodies, events }) {
+function DistributionPage({ employees, goodies, events, onSave }) {
+  const [employee, setEmployee] = useState("");
+  const [goodie, setGoodie] = useState("");
+  const [event, setEvent] = useState("");
   return (
     <>
       <PageHeader
@@ -399,65 +480,152 @@ function DistributionPage({ employees, goodies, events }) {
         <div className="form-grid">
           <label>
             Employee
-            <select>
-              <option>Choose an employee</option>
-              {employees.map((employee) => (
-                <option key={employee.id}>{employee.name}</option>
+            <select
+              value={employee}
+              onChange={(item) => setEmployee(item.target.value)}
+            >
+              <option value="">Choose an employee</option>
+              {employees.map((item) => (
+                <option value={item._id} key={item._id}>
+                  {item.name}
+                </option>
               ))}
             </select>
           </label>
           <label>
             Event
-            <select>
-              <option>{events[0].name}</option>
+            <select
+              value={event}
+              onChange={(item) => setEvent(item.target.value)}
+            >
+              <option value="">Choose an event</option>
+              {events
+                .filter((item) => item.status !== "cancelled")
+                .map((item) => (
+                  <option value={item._id} key={item._id}>
+                    {item.name}
+                  </option>
+                ))}
             </select>
           </label>
           <label>
             Goodie
-            <select>
-              <option>Choose a goodie</option>
-              {goodies.map((goodie) => (
-                <option key={goodie.id}>{goodie.name}</option>
+            <select
+              value={goodie}
+              onChange={(item) => setGoodie(item.target.value)}
+            >
+              <option value="">Choose a goodie</option>
+              {goodies.map((item) => (
+                <option value={item._id} key={item._id}>
+                  {item.name} ({item.stock})
+                </option>
               ))}
             </select>
           </label>
         </div>
-        <Button>Confirm collection</Button>
+        <Button
+          disabled={!employee || !goodie || !event}
+          onClick={() => onSave({ employee, goodie, event })}
+        >
+          Confirm collection
+        </Button>
       </Card>
     </>
   );
 }
-
-function EventForm({ onSave }) {
-  const [name, setName] = useState("");
-  const [date, setDate] = useState("");
+function EntityForm({ type, onSave }) {
+  const [form, setForm] = useState(
+    type === "employee"
+      ? {
+          name: "",
+          email: "",
+          password: "employee123",
+          department: "",
+          employeeCode: "",
+        }
+      : type === "goodie"
+        ? { name: "", description: "", stock: 0 }
+        : { name: "", date: "" },
+  );
+  const update = (key, value) =>
+    setForm((current) => ({ ...current, [key]: value }));
   return (
     <form
       className="modal-form"
       onSubmit={(event) => {
         event.preventDefault();
-        onSave({ name, date });
+        onSave(type === "employee" ? { ...form, role: "employee" } : form);
       }}
     >
       <label>
-        Event name
+        Name
         <input
           required
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="e.g. October Welcome Kit"
+          value={form.name}
+          onChange={(event) => update("name", event.target.value)}
         />
       </label>
-      <label>
-        Event date
-        <input
-          required
-          type="date"
-          value={date}
-          onChange={(event) => setDate(event.target.value)}
-        />
-      </label>
-      <Button type="submit">Save event</Button>
+      {type === "employee" && (
+        <>
+          <label>
+            Email
+            <input
+              required
+              type="email"
+              value={form.email}
+              onChange={(event) => update("email", event.target.value)}
+            />
+          </label>
+          <label>
+            Department
+            <input
+              value={form.department}
+              onChange={(event) => update("department", event.target.value)}
+            />
+          </label>
+          <label>
+            Employee code
+            <input
+              required
+              value={form.employeeCode}
+              onChange={(event) => update("employeeCode", event.target.value)}
+            />
+          </label>
+        </>
+      )}
+      {type === "goodie" && (
+        <>
+          <label>
+            Description
+            <input
+              value={form.description}
+              onChange={(event) => update("description", event.target.value)}
+            />
+          </label>
+          <label>
+            Opening stock
+            <input
+              required
+              type="number"
+              min="0"
+              value={form.stock}
+              onChange={(event) => update("stock", Number(event.target.value))}
+            />
+          </label>
+        </>
+      )}
+      {type === "event" && (
+        <label>
+          Date
+          <input
+            required
+            type="date"
+            value={form.date}
+            onChange={(event) => update("date", event.target.value)}
+          />
+        </label>
+      )}
+      <Button type="submit">Save {type}</Button>
     </form>
   );
 }
