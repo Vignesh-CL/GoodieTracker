@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "add:employees": "node src/addEmployees.js",
+    "migrate:distributions": "node src/migrateDistributions.js",
+    "migrate:distribution": "npm run migrate:distributions"
   },
   "keywords": [],
   "author": "",

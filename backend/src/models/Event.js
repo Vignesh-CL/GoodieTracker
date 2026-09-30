@@ -4,8 +4,9 @@ const eventSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     date: { type: Date, required: true },
-    status: { type: String, enum: ["draft", "active", "completed", "cancelled"], default: "draft" },
+    status: { type: String, enum: ["draft", "active", "completed", "cancelled"], default: "active" },
     goodies: [{ type: mongoose.Schema.Types.ObjectId, ref: "Goodie" }],
+    eligibleEmployees: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
   },
   { timestamps: true },
 );

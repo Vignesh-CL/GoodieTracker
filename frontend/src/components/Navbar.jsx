@@ -1,4 +1,26 @@
+import { useEffect, useState } from "react";
+
 function Navbar({ user, onMenuToggle, onLogout }) {
+  const displayName = user.role === "Administrator" ? "Admin" : user.name;
+  const [currentDateTime, setCurrentDateTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setCurrentDateTime(new Date()),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const formattedDateTime = currentDateTime.toLocaleString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
   return (
     <header className="navbar">
       <button
@@ -9,10 +31,10 @@ function Navbar({ user, onMenuToggle, onLogout }) {
       >
         Menu
       </button>
-      <div className="navbar-date">Thursday, September 24, 2026</div>
+      <div className="navbar-date">{formattedDateTime}</div>
       <div className="navbar-user">
         <span className="navbar-avatar">{user.name[0]}</span>
-        <span>{user.name}</span>
+        <span>{displayName}</span>
         <button className="logout-link" type="button" onClick={onLogout}>
           Log out
         </button>

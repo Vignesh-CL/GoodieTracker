@@ -2,8 +2,8 @@ import { Router } from "express";
 import { body } from "express-validator";
 import { createUser, deactivateUser, listUsers, updateUser } from "../controllers/userController.js";
 import { createGoodie, deactivateGoodie, listGoodies, updateGoodie } from "../controllers/goodieController.js";
-import { cancelEvent, createEvent, listEvents, updateEvent } from "../controllers/eventController.js";
-import { createDistribution, listDistributions } from "../controllers/distributionController.js";
+import { cancelEvent, createEvent, exportDistributions, listEvents, updateEvent } from "../controllers/eventController.js";
+import { createDistribution, listDistributions, listEmployeeDistributions, updateDistributionStatus } from "../controllers/distributionController.js";
 import { allowRoles, requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 
@@ -18,9 +18,12 @@ router.post("/goodies", [body("name").trim().notEmpty(), body("stock").isInt({ m
 router.patch("/goodies/:id", updateGoodie);
 router.delete("/goodies/:id", deactivateGoodie);
 router.get("/events", listEvents);
-router.post("/events", [body("name").trim().notEmpty(), body("date").isISO8601()], validate, createEvent);
+router.post("/events", [body("name").trim().notEmpty(), body("date").isISO8601(), body("status").optional().isIn(["draft", "active", "completed", "cancelled"]), body("eligibleEmployees").optional().isArray()], validate, createEvent);
 router.patch("/events/:id", updateEvent);
 router.delete("/events/:id", cancelEvent);
 router.get("/distributions", listDistributions);
+router.get("/distributions/export", exportDistributions);
 router.post("/distributions", [body("employee").isMongoId(), body("goodie").isMongoId(), body("event").isMongoId(), body("quantity").optional().isInt({ min: 1 })], validate, createDistribution);
+router.get("/users/:employeeId/distributions", listEmployeeDistributions);
+router.patch("/distributions/:id/status", [body("status").isIn(["pending", "received", "cancelled"])], validate, updateDistributionStatus);
 export default router;

@@ -361,12 +361,48 @@
 }
 .form-grid select,
 .modal-form input,
+.modal-form select,
 .login-form input {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: white;
   color: var(--ink);
   padding: 12px;
+}
+.employee-checklist {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  padding: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.employee-checklist legend {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 4px;
+}
+.checkbox-row {
+  display: grid !important;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 8px !important;
+  color: var(--ink) !important;
+  font-size: 13px !important;
+}
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+.checkbox-row small {
+  color: var(--muted);
+}
+.event-summary {
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
 }
 .modal-form .button {
   justify-self: start;

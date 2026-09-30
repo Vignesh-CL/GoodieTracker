@@ -119,12 +119,29 @@ function Dashboard({ user, onLogout }) {
   const [goodies, setGoodies] = useState([]);
   const [events, setEvents] = useState([]);
   const [distributions, setDistributions] = useState([]);
+  const [employeeEvents, setEmployeeEvents] = useState([]);
+  const [employeeDistributions, setEmployeeDistributions] = useState([]);
   const [modal, setModal] = useState(null);
   const [error, setError] = useState("");
   const isAdmin = user.role === "admin";
 
   async function loadData() {
-    if (!isAdmin) return;
+    if (!isAdmin) {
+      try {
+        const [eventResponse, distributionResponse] = await Promise.all([
+          api.get("/auth/events"),
+          api.get("/auth/distributions"),
+        ]);
+        setEmployeeEvents(eventResponse.data);
+        setEmployeeDistributions(distributionResponse.data);
+      } catch (requestError) {
+        setError(
+          requestError.response?.data?.message ||
+            "Could not load eligible events.",
+        );
+      }
+      return;
+    }
     try {
       const [users, inventory, eventList, records] = await Promise.all([
         api.get("/admin/users"),
@@ -169,11 +186,46 @@ function Dashboard({ user, onLogout }) {
     }
   }
 
+  async function updateDistributionStatus(id, status) {
+    try {
+      await api.patch(`/admin/distributions/${id}/status`, { status });
+      await loadData();
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message ||
+          "Could not update distribution status.",
+      );
+    }
+  }
+
+  async function exportDistributions() {
+    try {
+      const { data } = await api.get("/admin/distributions/export", {
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "goodietrack-distributions.csv";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message || "Could not export data.",
+      );
+    }
+  }
+
   const pageContent = !isAdmin ? (
-    <EmployeeOverviewPage user={user} />
+    <EmployeeOverviewPage
+      user={user}
+      events={employeeEvents}
+      distributions={employeeDistributions}
+    />
   ) : activePage === "employees" ? (
     <EmployeesPage
       employees={employees}
+      distributions={distributions}
       onAdd={() => setModal("employee")}
       onDeactivate={(id) => deactivate(`/admin/users/${id}`)}
     />
@@ -187,6 +239,7 @@ function Dashboard({ user, onLogout }) {
     <EventsPage
       events={events}
       onAdd={() => setModal("event")}
+      onEdit={(event) => setModal({ type: "event", record: event })}
       onCancel={(id) => deactivate(`/admin/events/${id}`)}
     />
   ) : activePage === "distribution" ? (
@@ -194,7 +247,10 @@ function Dashboard({ user, onLogout }) {
       employees={employees}
       goodies={goodies}
       events={events}
+      distributions={distributions}
       onSave={(payload) => createRecord("/admin/distributions", payload)}
+      onStatusUpdate={updateDistributionStatus}
+      onExport={exportDistributions}
     />
   ) : (
     <OverviewPage
@@ -218,15 +274,34 @@ function Dashboard({ user, onLogout }) {
         {error && <p className="error-message">{error}</p>}
         {pageContent}
         {modal && (
-          <Modal title={`Add ${modal}`} onClose={() => setModal(null)}>
+          <Modal
+            title={`${typeof modal === "string" ? "Add" : "Edit"} ${typeof modal === "string" ? modal : modal.type}`}
+            onClose={() => setModal(null)}
+          >
             <EntityForm
-              type={modal}
-              onSave={(payload) =>
-                createRecord(
-                  `/admin/${modal === "employee" ? "users" : `${modal}s`}`,
-                  payload,
-                )
+              type={typeof modal === "string" ? modal : modal.type}
+              employees={employees}
+              initialValue={
+                typeof modal === "string" ? undefined : modal.record
               }
+              onSave={async (payload) => {
+                const type = typeof modal === "string" ? modal : modal.type;
+                if (typeof modal === "string")
+                  return createRecord(
+                    `/admin/${type === "employee" ? "users" : `${type}s`}`,
+                    payload,
+                  );
+                try {
+                  await api.patch(`/admin/events/${modal.record._id}`, payload);
+                  setModal(null);
+                  await loadData();
+                } catch (requestError) {
+                  setError(
+                    requestError.response?.data?.message ||
+                      "Could not update event.",
+                  );
+                }
+              }}
             />
           </Modal>
         )}
@@ -235,7 +310,7 @@ function Dashboard({ user, onLogout }) {
   );
 }
 
-function EmployeeOverviewPage({ user }) {
+function EmployeeOverviewPage({ user, events, distributions }) {
   return (
     <>
       <PageHeader
@@ -246,10 +321,25 @@ function EmployeeOverviewPage({ user }) {
       <div className="stat-grid">
         <Card>
           <span className="stat-label">Goodies received</span>
-          <strong className="stat-value">0</strong>
+          <strong className="stat-value">
+            {distributions.filter((record) => record.status !== "cancelled").length}
+          </strong>
           <small>Recorded for your account</small>
         </Card>
       </div>
+      <Card className="table-card">
+        <h2>Eligible events</h2>
+        {events.length ? (
+          events.map((event) => (
+            <div className="event-summary" key={event._id}>
+              <strong>{event.name}</strong>
+              <small>{new Date(event.date).toLocaleDateString()}</small>
+            </div>
+          ))
+        ) : (
+          <p>No eligible events are available.</p>
+        )}
+      </Card>
     </>
   );
 }
@@ -265,15 +355,23 @@ function PageHeader({ eyebrow, title, copy, action }) {
     </div>
   );
 }
-function OverviewPage({ employees, goodies, distributions, onNavigate, onRecord }) {
+function OverviewPage({
+  employees,
+  goodies,
+  distributions,
+  onNavigate,
+  onRecord,
+}) {
   const totalStock = goodies.reduce((sum, item) => sum + item.stock, 0);
-  const collected = distributions.length;
+  const collected = distributions.filter(
+    (item) => item.status === "received",
+  ).length;
   const activeEvent = distributions[0]?.event?.name || "No collections yet";
   return (
     <>
       <PageHeader
         eyebrow="ADMIN CONSOLE"
-        title="Good morning, Ava."
+        title="Hello, Admin."
         copy="Here is the pulse of your goodie distribution program."
         action={<Button onClick={onRecord}>Record collection</Button>}
       />
@@ -343,7 +441,7 @@ function OverviewPage({ employees, goodies, distributions, onNavigate, onRecord 
   );
 }
 
-function EmployeesPage({ employees, onAdd, onDeactivate }) {
+function EmployeesPage({ employees, distributions, onAdd, onDeactivate }) {
   const columns = [
     {
       key: "name",
@@ -357,6 +455,24 @@ function EmployeesPage({ employees, onAdd, onDeactivate }) {
     },
     { key: "department", label: "Department" },
     { key: "employeeCode", label: "Code" },
+    {
+      key: "distributionStatus",
+      label: "Goodie status",
+      render: (row) => {
+        const employeeRecords = distributions.filter(
+          (record) =>
+            record.employee?._id === row._id || record.employee === row._id,
+        );
+        if (!employeeRecords.length) return <StatusBadge status="Pending" />;
+        return employeeRecords.map((record) => (
+          <div key={record._id}>
+            <small>{record.eventName || record.event?.name || "Event"}</small>
+            <br />
+            <StatusBadge status={record.status || "received"} />
+          </div>
+        ));
+      },
+    },
     {
       key: "status",
       label: "Status",
@@ -425,7 +541,7 @@ function InventoryPage({ goodies, onAdd, onDeactivate }) {
     </>
   );
 }
-function EventsPage({ events, onAdd, onCancel }) {
+function EventsPage({ events, onAdd, onEdit, onCancel }) {
   const columns = [
     { key: "name", label: "Event" },
     {
@@ -439,6 +555,11 @@ function EventsPage({ events, onAdd, onCancel }) {
       render: (row) => (
         <>
           <StatusBadge status={row.status} />
+          {row.status !== "cancelled" && (
+            <button className="logout-link" onClick={() => onEdit(row)}>
+              Edit
+            </button>
+          )}
           {row.status !== "cancelled" && (
             <button className="logout-link" onClick={() => onCancel(row._id)}>
               Cancel
@@ -465,16 +586,38 @@ function EventsPage({ events, onAdd, onCancel }) {
     </>
   );
 }
-function DistributionPage({ employees, goodies, events, onSave }) {
+function DistributionPage({
+  employees,
+  goodies,
+  events,
+  distributions,
+  onSave,
+  onStatusUpdate,
+  onExport,
+}) {
   const [employee, setEmployee] = useState("");
   const [goodie, setGoodie] = useState("");
   const [event, setEvent] = useState("");
+  const selectedEvent = events.find((item) => item._id === event);
+  const eligibleEmployeeIds = (selectedEvent?.eligibleEmployees || []).map(
+    (item) => item._id || item,
+  );
+  const selectableEmployees = selectedEvent
+    ? eligibleEmployeeIds.length
+      ? employees.filter((item) => eligibleEmployeeIds.includes(item._id))
+      : employees
+    : [];
   return (
     <>
       <PageHeader
         eyebrow="DISTRIBUTION DESK"
         title="Record a collection"
         copy="One employee, one goodie, one clear record."
+        action={
+          <Button variant="ghost" onClick={onExport}>
+            Export Excel
+          </Button>
+        }
       />
       <Card className="form-card">
         <div className="form-grid">
@@ -484,8 +627,12 @@ function DistributionPage({ employees, goodies, events, onSave }) {
               value={employee}
               onChange={(item) => setEmployee(item.target.value)}
             >
-              <option value="">Choose an employee</option>
-              {employees.map((item) => (
+              <option value="">
+                {selectedEvent
+                  ? "Choose an eligible employee"
+                  : "Choose an event first"}
+              </option>
+              {selectableEmployees.map((item) => (
                 <option value={item._id} key={item._id}>
                   {item.name}
                 </option>
@@ -496,7 +643,10 @@ function DistributionPage({ employees, goodies, events, onSave }) {
             Event
             <select
               value={event}
-              onChange={(item) => setEvent(item.target.value)}
+              onChange={(item) => {
+                setEvent(item.target.value);
+                setEmployee("");
+              }}
             >
               <option value="">Choose an event</option>
               {events
@@ -530,10 +680,66 @@ function DistributionPage({ employees, goodies, events, onSave }) {
           Confirm collection
         </Button>
       </Card>
+      <Card className="table-card">
+        <Table
+          columns={[
+            {
+              key: "employee",
+              label: "Employee",
+              render: (row) => (
+                <>
+                  <strong>
+                    {row.employeeName ||
+                      row.employee?.name ||
+                      "Unknown employee"}
+                  </strong>
+                  <small>
+                    {row.employeeCode || row.employee?.employeeCode}
+                  </small>
+                </>
+              ),
+            },
+            {
+              key: "event",
+              label: "Event",
+              render: (row) => row.eventName || row.event?.name || "-",
+            },
+            {
+              key: "goodie",
+              label: "Goodie",
+              render: (row) => row.goodieName || row.goodie?.name || "-",
+            },
+            {
+              key: "status",
+              label: "Status",
+              render: (row) => (
+                <>
+                  <StatusBadge status={row.status || "received"} />
+                  {row.status !== "cancelled" && (
+                    <button
+                      className="logout-link"
+                      onClick={() =>
+                        onStatusUpdate(
+                          row._id,
+                          row.status === "received" ? "pending" : "received",
+                        )
+                      }
+                    >
+                      Mark {row.status === "received" ? "pending" : "received"}
+                    </button>
+                  )}
+                </>
+              ),
+            },
+          ]}
+          rows={distributions.map((row) => ({ ...row, id: row._id }))}
+          emptyMessage="No distributions recorded yet."
+        />
+      </Card>
     </>
   );
 }
-function EntityForm({ type, onSave }) {
+function EntityForm({ type, employees = [], initialValue, onSave }) {
   const [form, setForm] = useState(
     type === "employee"
       ? {
@@ -545,8 +751,22 @@ function EntityForm({ type, onSave }) {
         }
       : type === "goodie"
         ? { name: "", description: "", stock: 0 }
-        : { name: "", date: "" },
+        : { name: "", date: "", status: "draft", eligibleEmployees: [] },
   );
+  const [eligibilityMode, setEligibilityMode] = useState("everyone");
+  useEffect(() => {
+    if (!initialValue) return;
+    const eligibleEmployees = (initialValue.eligibleEmployees || []).map(
+      (employee) => employee._id || employee,
+    );
+    setForm({
+      name: initialValue.name,
+      date: initialValue.date?.slice(0, 10),
+      status: initialValue.status,
+      eligibleEmployees,
+    });
+    setEligibilityMode(eligibleEmployees.length ? "selected" : "everyone");
+  }, [initialValue]);
   const update = (key, value) =>
     setForm((current) => ({ ...current, [key]: value }));
   return (
@@ -615,15 +835,66 @@ function EntityForm({ type, onSave }) {
         </>
       )}
       {type === "event" && (
-        <label>
-          Date
-          <input
-            required
-            type="date"
-            value={form.date}
-            onChange={(event) => update("date", event.target.value)}
-          />
-        </label>
+        <>
+          <label>
+            Date
+            <input
+              required
+              type="date"
+              value={form.date}
+              onChange={(event) => update("date", event.target.value)}
+            />
+          </label>
+          <label>
+            Status
+            <select
+              value={form.status}
+              onChange={(event) => update("status", event.target.value)}
+            >
+              <option value="draft">Draft</option>
+              <option value="active">Active</option>
+            </select>
+          </label>
+          <label>
+            Eligible employees
+            <select
+              value={eligibilityMode}
+              onChange={(event) => {
+                const mode = event.target.value;
+                setEligibilityMode(mode);
+                if (mode === "everyone") update("eligibleEmployees", []);
+              }}
+            >
+              <option value="everyone">Everyone</option>
+              <option value="selected">Select employees</option>
+            </select>
+          </label>
+          {eligibilityMode === "selected" && (
+            <fieldset className="employee-checklist">
+              <legend>Choose eligible employees</legend>
+              {employees.map((employee) => (
+                <label key={employee._id} className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={form.eligibleEmployees.includes(employee._id)}
+                    onChange={(event) =>
+                      update(
+                        "eligibleEmployees",
+                        event.target.checked
+                          ? [...form.eligibleEmployees, employee._id]
+                          : form.eligibleEmployees.filter(
+                              (id) => id !== employee._id,
+                            ),
+                      )
+                    }
+                  />
+                  <span>{employee.name}</span>
+                  <small>{employee.employeeCode}</small>
+                </label>
+              ))}
+            </fieldset>
+          )}
+        </>
       )}
       <Button type="submit">Save {type}</Button>
     </form>
